@@ -12,9 +12,15 @@ dependencies = [
     "torch>=2.9.1",
     "tqdm>=4.67.1",
     "wandb[media]>=0.23.1",
-    "gym[classic_control,mujoco,box2d]==0.25.2",
+    "gym[classic_control]==0.25.2",
     "numpy<2.0.0",
 ]
+
+[project.optional-dependencies]
+# Install these only if you actually need those environments.
+# They may require additional system dependencies (see README).
+box2d = ["gym[box2d]==0.25.2"]
+mujoco = ["gym[mujoco]==0.25.2"]
 
 [build-system]
 requires = ["setuptools>=69"]

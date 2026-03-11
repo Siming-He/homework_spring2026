@@ -15,7 +15,8 @@ def sample_trajectory(
     env: gym.Env, policy: MLPPolicy, max_length: int, render: bool = False
 ) -> Dict[str, np.ndarray]:
     """Sample a rollout in the environment from a policy."""
-    ob = env.reset()
+    reset_out = env.reset()
+    ob = reset_out[0] if isinstance(reset_out, tuple) else reset_out
     obs, acs, rewards, next_obs, terminals, image_obs = [], [], [], [], [], []
     steps = 0
     while True:
@@ -29,15 +30,27 @@ def sample_trajectory(
                 cv2.resize(img, dsize=(250, 250), interpolation=cv2.INTER_CUBIC)
             )
 
-        # TODO use the most recent ob to decide what to do
-        ac = None
+        # use the most recent ob to decide what to do
+        ac = policy.get_action(ob)
+        if isinstance(env.action_space, gym.spaces.Discrete):
+            if isinstance(ac, np.ndarray):
+                ac = int(np.asarray(ac).item())
+        else:
+            ac = np.asarray(ac, dtype=env.action_space.dtype).reshape(
+                env.action_space.shape
+            )
 
-        # TODO: take that action and get reward and next ob
-        next_ob, rew, done, info = None, None, None, None
+        # take that action and get reward and next ob
+        step_out = env.step(ac)
+        if len(step_out) == 5:
+            next_ob, rew, terminated, truncated, info = step_out
+            done = terminated or truncated
+        else:
+            next_ob, rew, done, info = step_out
 
-        # TODO rollout can end due to done, or due to max_length
+        # rollout can end due to done, or due to max_length
         steps += 1
-        rollout_done = None
+        rollout_done = done or (steps >= max_length)
 
         # record result of taking that action
         obs.append(ob)

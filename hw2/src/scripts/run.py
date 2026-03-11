@@ -16,6 +16,61 @@ from infrastructure.log_utils import setup_wandb, Logger, dump_log
 MAX_NVIDEO = 2
 
 
+def make_env_or_raise(env_name: str):
+    try:
+        return gym.make(env_name, render_mode=None)
+    except (ModuleNotFoundError, gym.error.DependencyNotInstalled) as exc:
+        env_lower = env_name.lower()
+
+        # Gym sometimes converts missing optional deps into DependencyNotInstalled,
+        # so derive a best-effort "missing" token from the exception.
+        missing = getattr(exc, "name", None) or "unknown"
+        exc_text = str(exc).lower()
+        if missing == "unknown":
+            for token in ("mujoco", "glfw", "box2d", "swig"):
+                if token in exc_text:
+                    missing = token
+                    break
+
+        if missing in {"mujoco", "glfw"} or any(
+            token in env_lower
+            for token in (
+                "halfcheetah",
+                "hopper",
+                "walker",
+                "ant",
+                "humanoid",
+                "swimmer",
+            )
+        ):
+            hint = (
+                "MuJoCo environments require optional dependencies.\n"
+                "Install once: uv sync --extra mujoco\n"
+                "One-off run: uv run --extra mujoco src/scripts/run.py --env_name "
+                f"{env_name} ..."
+            )
+        elif missing.lower() in {"box2d", "swig"} or any(
+            token in env_lower for token in ("lunarlander", "bipedalwalker")
+        ):
+            hint = (
+                "Box2D environments require optional dependencies.\n"
+                "Install once: uv sync --extra box2d\n"
+                "One-off run: uv run --extra box2d src/scripts/run.py --env_name "
+                f"{env_name} ..."
+            )
+        else:
+            hint = (
+                "Try installing optional dependencies for this environment. "
+                "See README.md for `uv sync --extra ...` options."
+            )
+
+        prefix = f"Failed to create environment `{env_name}`."
+        if isinstance(exc, ModuleNotFoundError):
+            prefix = f"{prefix} Missing module `{missing}`."
+            raise ModuleNotFoundError(f"{prefix}\n{hint}") from exc
+        raise gym.error.DependencyNotInstalled(f"{prefix}\n{exc}\n\n{hint}") from exc
+
+
 def run_training_loop(logger, args):
     # set random seeds
     np.random.seed(args.seed)
@@ -23,7 +78,7 @@ def run_training_loop(logger, args):
     ptu.init_gpu(use_gpu=not args.no_gpu, gpu_id=args.which_gpu)
 
     # make the gym environment
-    env = gym.make(args.env_name, render_mode=None)
+    env = make_env_or_raise(args.env_name)
     discrete = isinstance(env.action_space, gym.spaces.Discrete)
 
     max_ep_len = args.ep_len or env.spec.max_episode_steps
@@ -59,17 +114,24 @@ def run_training_loop(logger, args):
 
     for itr in range(args.n_iter):
         print(f"\n********** Iteration {itr} ************")
-        # TODO: sample `args.batch_size` transitions using utils.sample_trajectories
+        # sample `args.batch_size` transitions using utils.sample_trajectories
         # make sure to use `max_ep_len`
-        trajs, envsteps_this_batch = None, None
+        trajs, envsteps_this_batch = utils.sample_trajectories(
+            env, agent.actor, args.batch_size, max_ep_len
+        )
         total_envsteps += envsteps_this_batch
 
         # trajs should be a list of dictionaries of NumPy arrays, where each dictionary corresponds to a trajectory.
         # this line converts this into a single dictionary of lists of NumPy arrays.
         trajs_dict = {k: [traj[k] for traj in trajs] for k in trajs[0]}
 
-        # TODO: train the agent using the sampled trajectories and the agent's update function
-        train_info: dict = None
+        # train the agent using the sampled trajectories and the agent's update function
+        train_info: dict = agent.update(
+            trajs_dict["observation"],
+            trajs_dict["action"],
+            trajs_dict["reward"],
+            trajs_dict["terminal"],
+        )
 
         if itr % args.scalar_log_freq == 0:
             # save eval metrics
