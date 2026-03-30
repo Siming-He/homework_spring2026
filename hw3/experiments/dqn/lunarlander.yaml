@@ -6,7 +6,7 @@ num_layers: 2
 learning_rate: 0.001
 total_steps: 500000
 discount: 0.99
-target_update_period: 1000
+target_update_period: 1000 # 100, 10000, 10
 use_double_q: true
 learning_starts: 20000
 batch_size: 64
