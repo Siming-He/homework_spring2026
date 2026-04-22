@@ -43,7 +43,21 @@ def compute_per_token_logprobs(
     #
     # Respect enable_grad: when enable_grad=False this function should not build an
     # autograd graph.
-    raise NotImplementedError("student TODO: compute_per_token_logprobs")
+    batch_size, seq_len = input_ids.shape
+    if seq_len <= 1:
+        return input_ids.new_empty((batch_size, 0), dtype=torch.float32)
+
+    with torch.set_grad_enabled(enable_grad):
+        out = model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False)
+        logits = out.logits[:, :-1, :].contiguous()
+        targets = input_ids[:, 1:].contiguous()
+        vocab_size = logits.shape[-1]
+        token_nll = F.cross_entropy(
+            logits.reshape(-1, vocab_size),
+            targets.reshape(-1),
+            reduction="none",
+        )
+        return (-token_nll).view(batch_size, seq_len - 1)
 
 
 def build_completion_mask(
@@ -66,7 +80,16 @@ def build_completion_mask(
     # prompt_input_len is the (padded) prompt length before completion tokens were
     # appended. You can use attention_mask to exclude padding; pad_token_id is passed
     # for convenience but a direct attention-mask-based solution is fine.
-    raise NotImplementedError("student TODO: build_completion_mask")
+    del pad_token_id
+
+    batch_size, seq_len = input_ids.shape
+    if seq_len <= 1:
+        return torch.zeros((batch_size, 0), device=input_ids.device, dtype=torch.float32)
+
+    token_positions = torch.arange(1, seq_len, device=input_ids.device)
+    is_completion = token_positions >= int(prompt_input_len)
+    is_nonpad = attention_mask[:, 1:].to(dtype=torch.bool)
+    return (is_nonpad & is_completion.unsqueeze(0)).to(dtype=torch.float32)
 
 
 def masked_sum(x: torch.Tensor, mask: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
@@ -110,4 +133,6 @@ def approx_kl_from_logprobs(
     #                             = KL(p_new || p_ref).
     #
     # The clamp to [-20, 20] is for numerical stability / variance control.
-    raise NotImplementedError("student TODO: approx_kl_from_logprobs")
+    delta = (ref_logprobs - new_logprobs).clamp(min=-log_ratio_clip, max=log_ratio_clip)
+    per_token = torch.exp(delta) - delta - 1.0
+    return masked_mean(per_token, mask, eps=eps)
